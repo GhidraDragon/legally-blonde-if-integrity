@@ -4,6 +4,8 @@ and biochemical
 
 So... 
 
+It's actually Pegasus or equiv (i think eg if you're able to capture a log of click and double-click you may be able to find a time interval separating those 2 shorter than what's humanly possible, etc)
+
 ![Screenshot_20250317_092835_X](https://github.com/user-attachments/assets/5a317aa8-2806-41ea-8137-c097d50dc764)
 
 ![Screenshot_20250317_093025_X](https://github.com/user-attachments/assets/84cbcd37-6a0d-491b-98de-bc23117e2925)
