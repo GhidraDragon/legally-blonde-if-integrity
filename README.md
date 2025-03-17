@@ -19,3 +19,22 @@ It's actually Pegasus or equiv (i think eg if you're able to capture a log of cl
 ![Screenshot_20250317_093053_X](https://github.com/user-attachments/assets/8da61776-82ee-44a4-bcee-90749875c7b6)
 
 ![Screenshot_20250317_093056_X](https://github.com/user-attachments/assets/8485ee11-6308-42c9-b648-62960cd6a4da)
+
+They're saying Github left this as a public repo, and the original legally-blonde for like a month? Yet
+
+§2331. Definitions
+As used in this chapter—
+
+(1) the term "international terrorism" means activities that—
+
+(A) involve violent acts or acts dangerous to human life that are a violation of the criminal laws of the United States or of any State, or that would be a criminal violation if committed within the jurisdiction of the United States or of any State;
+
+(B) appear to be intended—
+
+(i) to intimidate or coerce a civilian population;
+
+(ii) to influence the policy of a government by intimidation or coercion; or
+
+(iii) to affect the conduct of a government by mass destruction, assassination, or kidnapping; and
+
+https://uscode.house.gov/view.xhtml?path=/prelim@title18/part1/chapter113B&edition=prelim
