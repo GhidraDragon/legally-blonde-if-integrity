@@ -7,3 +7,5 @@ So for public repos, we let ChatGPT "blue team?" responding to "red team" and Gi
 They say ChatGPT can make mistakes; check important info, but how about not assume true until verfied?
 
 ----
+
+python3.12 rlscan.py

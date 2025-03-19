@@ -22,7 +22,7 @@ import numpy as np
 import socket
 import ssl
 import threading
-import subprocess  # Added for running C/CPP scripts in background
+import subprocess
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -169,10 +169,10 @@ VULN_EXPLANATIONS = {
     "npm Token":"npm access token exposed.",
     "GraphQL Injection":"Injection or misconfig in GraphQL queries.",
     "Regex DOS":"Potential catastrophic backtracking.",
+    "Potential WAF":"WAF presence indicated.",
     "CORS Misconfiguration":"Overly broad Access-Control-Allow-Origin.",
     "Insecure HTTP Methods":"Allows PUT, DELETE, or TRACE.",
     "No explanation":"No explanation",
-    "Potential WAF":"WAF presence indicated.",
     "ChromeDriver Error":"Error using ChromeDriver",
     "Exposed .env File":"Possible .env file exposure.",
     "Exposed Environment Variable":"Env var or secrets in the response.",
@@ -1027,6 +1027,11 @@ def scan_routers_for_entry_points():
     return results
 
 def main():
+    # Run all in background
+    subprocess.Popen(["./135_microsoft_rpc", "ip_of_node", "5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(["./23_telnet", "scan", "start", "ip", "end", "ip", "port"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(["./80_http", "ip_of_node", "80"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     sys.stdout.reconfigure(line_buffering=True)
     train_base_ml_models()
     train_all_vulnerability_models()
