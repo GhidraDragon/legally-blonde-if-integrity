@@ -1,3 +1,7 @@
+/*
+ * Usage: ./993_imaps<IP> <PORT>
+ * For educational and authorized testing only.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,10 +12,6 @@
 #include <sys/socket.h>
 
 #define MAX_BUF 1024
-
-/*
- * For educational and authorized testing only.
- */
 
 int send_weak_imaps_data(const char *host, unsigned short port) {
     int sock;
@@ -91,6 +91,42 @@ char* capture_flag(const char *host, unsigned short port) {
     return flag;
 }
 
+int maintain_persistent_portal(const char *host, unsigned short port) {
+    int sock;
+    struct sockaddr_in addr;
+    char buffer[MAX_BUF];
+    int n, reconnect_attempts = 0;
+    while(1) {
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        if(sock < 0) return -1;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        if(inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+            close(sock);
+            return -1;
+        }
+        if(connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            close(sock);
+            if(reconnect_attempts++ > 5) return -1;
+            sleep(1);
+            continue;
+        }
+        printf("Persistent portal connected.\n");
+        while(1) {
+            memset(buffer, 0, sizeof(buffer));
+            n = recv(sock, buffer, sizeof(buffer)-1, 0);
+            if(n <= 0) {
+                printf("Connection lost, attempting reconnect.\n");
+                close(sock);
+                break;
+            }
+            buffer[n] = '\0';
+            printf("Portal data: %s\n", buffer);
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     char data[] = "Sensitive IMAPS Data";
     printf("Sending IMAPS data in a weakly protected way: %s\n", data);
@@ -100,7 +136,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     const char *ip = argv[1];
-    unsigned short port = atoi(argv[2]);
+    unsigned short port = (unsigned short)atoi(argv[2]);
 
     if(!detect_exploit(ip, port)) {
         printf("Port %d closed or unreachable on %s.\n", port, ip);
@@ -120,5 +156,9 @@ int main(int argc, char *argv[]) {
     } else {
         printf("No flag captured.\n");
     }
+
+    printf("Maintaining persistent portal...\n");
+    maintain_persistent_portal(ip, port);
+
     return 0;
 }

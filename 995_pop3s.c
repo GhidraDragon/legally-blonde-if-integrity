@@ -1,3 +1,5 @@
+/* Usage: For educational and authorized testing only. */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,10 +9,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <sys/select.h>
 
 #define MAX_BUF 1024
-
-/* For educational and authorized testing only. */
 
 static int create_connection(const char *host, unsigned short port) {
     struct addrinfo hints, *res, *p;
@@ -25,8 +26,7 @@ static int create_connection(const char *host, unsigned short port) {
         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if(sock < 0) continue;
         struct timeval tv;
-        tv.tv_sec = 5;
-        tv.tv_usec = 0;
+        tv.tv_sec = 5; tv.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         if(connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
@@ -99,12 +99,48 @@ char* capture_flag(const char *host, unsigned short port) {
     return flag;
 }
 
+static void persistent_portal(const char *host, unsigned short port) {
+    char sendbuf[MAX_BUF], recvbuf[MAX_BUF];
+    int sock = create_connection(host, port);
+    if(sock < 0) {
+        printf("Persistent portal failed to connect.\n");
+        return;
+    }
+    printf("Persistent portal connected. Type 'exit' to quit.\n");
+    while(1) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        FD_SET(sock, &fds);
+        int maxfd = (sock > STDIN_FILENO ? sock : STDIN_FILENO) + 1;
+        if(select(maxfd, &fds, NULL, NULL, NULL) < 0) break;
+        if(FD_ISSET(STDIN_FILENO, &fds)) {
+            memset(sendbuf, 0, sizeof(sendbuf));
+            if(!fgets(sendbuf, sizeof(sendbuf), stdin)) break;
+            if(strncmp(sendbuf, "exit", 4) == 0) break;
+            if(send_all(sock, sendbuf, strlen(sendbuf)) < 0) break;
+        }
+        if(FD_ISSET(sock, &fds)) {
+            memset(recvbuf, 0, sizeof(recvbuf));
+            int n = recv(sock, recvbuf, sizeof(recvbuf) - 1, 0);
+            if(n <= 0) {
+                printf("Server closed connection.\n");
+                break;
+            }
+            recvbuf[n] = '\0';
+            printf("%s", recvbuf);
+        }
+    }
+    close(sock);
+    printf("Persistent portal closed.\n");
+}
+
 int main(int argc, char *argv[]) {
     char data[] = "Sensitive POP3S Data";
     printf("Sending POP3S data in a weakly protected way: %s\n", data);
 
     if(argc < 3) {
-        printf("Usage: %s <IP> <PORT>\n", argv[0]);
+        printf("Usage: %s <IP> <PORT> [persistent]\n", argv[0]);
         return 1;
     }
     const char *ip = argv[1];
@@ -127,6 +163,10 @@ int main(int argc, char *argv[]) {
         printf("Captured flag: %s\n", found_flag);
     } else {
         printf("No flag captured.\n");
+    }
+
+    if(argc >= 4 && strcmp(argv[3], "persistent") == 0) {
+        persistent_portal(ip, port);
     }
     return 0;
 }

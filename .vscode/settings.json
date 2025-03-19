@@ -3,6 +3,13 @@
         "queue": "cpp",
         "stack": "cpp",
         "vector": "cpp",
-        "cstring": "cpp"
+        "cstring": "cpp",
+        "socket.h": "c",
+        "unistd.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "inet.h": "c",
+        "stdio.h": "c"
     }
 }

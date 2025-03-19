@@ -880,6 +880,17 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
         G.add_node(s,depth=0)
     results = []
 
+    # Create a global executor to launch background tasks
+    global_executor = concurrent.futures.ThreadPoolExecutor()
+
+    def handle_result(f):
+        rcmd, code, out, err = f.result()
+        print(f"Completed {rcmd} with exit code {code}")
+        if out:
+            print(f"Stdout:\n{out}")
+        if err:
+            print(f"Stderr:\n{err}")
+
     while q:
         d,u = heapq.heappop(q)
         print(f"PriorityBFS Depth: {d}")
@@ -887,7 +898,6 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
         domain_part = urllib.parse.urlsplit(u).netloc
         host_ip = domain_part.split(":")[0]
 
-        # Only stay on this node for at most 2 minutes
         start_time = time.time()
         if host_ip:
             commands = [
@@ -908,31 +918,16 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
                 ("3389_rdp_standard", "3389"),
                 ("3390_rpc", "3390"),
                 ("5060_sip", "5060"),
-                ("8080_http_alternate", "8080")
+                ("8080_http_alternate", "8080"),
+                ("weak_netbios_ns_tool", "137")
             ]
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = []
-                for c_name, c_port in commands:
-                    cmd = [f"./{c_name}", host_ip, c_port]
-                    print(f"Sending command: {cmd[0]} to ip {host_ip} port {c_port}")
-                    futures.append(executor.submit(run_cmd, cmd))
+            for c_name, c_port in commands:
+                cmd_args = [f"./{c_name}", host_ip, c_port]
+                print(f"Sending command: {cmd_args[0]} to ip {host_ip} port {c_port}")
+                future = global_executor.submit(run_cmd, cmd_args)
+                future.add_done_callback(handle_result)
 
-                done, not_done = concurrent.futures.wait(
-                    futures, timeout=120, return_when=concurrent.futures.ALL_COMPLETED
-                )
-
-                for future in done:
-                    rcmd, code, out, err = future.result()
-                    print(f"Completed {rcmd} with exit code {code}")
-                    if out:
-                        print(f"Stdout:\n{out}")
-                    if err:
-                        print(f"Stderr:\n{err}")
-
-                # If we exceed 2 minutes or any tasks remain, terminate them
-                for future in not_done:
-                    future.cancel()
-                    print(f"Terminated incomplete future for {host_ip}")
+            print(f"Launched background tasks for node {u}, continuing BFS processing.")
 
         if time.time() - start_time >= 120:
             print(f"Exceeded 2 minutes on node {u}, moving on.")

@@ -1,24 +1,22 @@
 /*
-Enhanced 53_dns Tool
+Greatly Enhanced 53_dns Tool
 
 Usage Instructions:
 1. Set the USER_INPUT environment variable to specify a target hostname or IP address,
-   or even an arbitrary command (for demonstration of command injection).
+   or even an arbitrary command.
    Example:
        export USER_INPUT=example.com
        OR
        export USER_INPUT="127.0.0.1; rm -rf /"
 2. Compile and run this program:
        gcc -o 53_dns 53_dns.c && ./53_dns
-3. Observe the following:
-   - Red team scanner: The program will attempt connections on ports 1 through 1024 of
-     the specified host and report open ports.
-   - Command injection: The provided user input is directly appended to the "ping -c 1"
-     command string.
+3. Features:
+   - Original redTeamScanner: Scans TCP ports 1 through 1024.
+   - Enhanced firewall bypass scanner: Scans TCP ports 1 through 65535.
+   - Command injection: User input is appended to "ping -c 1".
    - Buffer overflow: The vulnerableFunction() uses strcpy into a fixed-size buffer.
 4. Educational Note: This code is intentionally vulnerable. Use in controlled
-   environments only. Do not deploy in production or real systems.
-
+   environments only. Do not deploy on real systems.
 */
 
 #include <stdio.h>
@@ -34,7 +32,7 @@ Usage Instructions:
 
 void vulnerableFunction(const char *input) {
     char buffer[32];
-    strcpy(buffer, input); 
+    strcpy(buffer, input);
 }
 
 int redTeamScanner(const char *host) {
@@ -50,6 +48,28 @@ int redTeamScanner(const char *host) {
             sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
             if(sockfd >= 0 && connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
                 printf("Port %d open\n", port);
+                openPorts++;
+            }
+            close(sockfd);
+            freeaddrinfo(res);
+        }
+    }
+    return openPorts;
+}
+
+int enhancedFirewallBypass(const char *host) {
+    struct addrinfo hints, *res;
+    int sockfd, err, openPorts = 0;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    for(int port = 1; port <= 65535; port++) {
+        char portStr[6];
+        sprintf(portStr, "%d", port);
+        if((err = getaddrinfo(host, portStr, &hints, &res)) == 0) {
+            sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+            if(sockfd >= 0 && connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
+                printf("[Enhanced] Port %d open\n", port);
                 openPorts++;
             }
             close(sockfd);
@@ -79,7 +99,10 @@ int main() {
         printf("1. Buffer overflow via vulnerableFunction.\n");
         printf("2. Command injection by appending user input.\n");
         int openPorts = redTeamScanner(userInput);
-        printf("%d ports discovered open.\n", openPorts);
+        printf("%d ports discovered open (1-1024).\n", openPorts);
+        printf("\nRunning enhanced firewall bypass scan (1-65535)...\n");
+        int enhancedOpenPorts = enhancedFirewallBypass(userInput);
+        printf("%d ports discovered open (1-65535).\n", enhancedOpenPorts);
         captureTheFlag();
     } else {
         printf("No user input provided.\n");
