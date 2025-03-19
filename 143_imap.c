@@ -13,51 +13,59 @@
  * For educational and authorized testing only.
  */
 
-int send_weak_imap_data(const char *host, unsigned short port) {
+static int create_and_connect_socket(const char *host, unsigned short port) {
+    int s;
+    struct sockaddr_in addr;
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if(s < 0) return -1;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if(inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+        close(s);
+        return -2;
+    }
+    if(connect(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(s);
+        return -3;
+    }
+    return s;
+}
+
+static int send_all(int s, const char *buf, size_t len) {
+    size_t total_sent = 0;
+    while(total_sent < len) {
+        ssize_t sent = send(s, buf + total_sent, len - total_sent, 0);
+        if(sent <= 0) return -1;
+        total_sent += sent;
+    }
+    return 0;
+}
+
+int send_weak_imaps_data(const char *host, unsigned short port) {
     int sock;
-    struct sockaddr_in server;
     char buffer[MAX_BUF];
     int n;
-
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    sock = create_and_connect_socket(host, port);
     if(sock < 0) return -1;
-    server.sin_family = AF_INET;
-    server.sin_port = htons(port);
-    if(inet_pton(AF_INET, host, &server.sin_addr) <= 0) {
+    strcpy(buffer, "STARTTLS IMAP");
+    if(send_all(sock, buffer, strlen(buffer)) < 0) {
         close(sock);
         return -2;
     }
-    if(connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
-        close(sock);
-        return -3;
-    }
-    strcpy(buffer, "LOGIN user pass");
-    send(sock, buffer, strlen(buffer), 0);
     memset(buffer, 0, sizeof(buffer));
     n = recv(sock, buffer, sizeof(buffer)-1, 0);
     if(n > 0) {
         buffer[n] = '\0';
-        printf("IMAP response: %s\n", buffer);
+        printf("IMAPS response: %s\n", buffer);
     }
     close(sock);
     return 0;
 }
 
 int detect_exploit(const char *host, unsigned short port) {
-    int sock;
-    struct sockaddr_in target;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    int sock = create_and_connect_socket(host, port);
     if(sock < 0) return 0;
-    target.sin_family = AF_INET;
-    target.sin_port = htons(port);
-    if(inet_pton(AF_INET, host, &target.sin_addr) <= 0) {
-        close(sock);
-        return 0;
-    }
-    if(connect(sock, (struct sockaddr *)&target, sizeof(target)) < 0) {
-        close(sock);
-        return 0;
-    }
     close(sock);
     return 1;
 }
@@ -65,42 +73,35 @@ int detect_exploit(const char *host, unsigned short port) {
 char* capture_flag(const char *host, unsigned short port) {
     static char flag[MAX_BUF];
     int sock;
-    struct sockaddr_in srv;
     char buffer[MAX_BUF];
     int n;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    memset(flag, 0, sizeof(flag));
+    sock = create_and_connect_socket(host, port);
     if(sock < 0) return NULL;
-    srv.sin_family = AF_INET;
-    srv.sin_port = htons(port);
-    if(inet_pton(AF_INET, host, &srv.sin_addr) <= 0) {
+    if(send_all(sock, "GET_FLAG", 8) < 0) {
         close(sock);
         return NULL;
     }
-    if(connect(sock, (struct sockaddr*)&srv, sizeof(srv)) < 0) {
-        close(sock);
-        return NULL;
-    }
-    send(sock, "GET_FLAG", 8, 0);
     memset(buffer, 0, sizeof(buffer));
     n = recv(sock, buffer, sizeof(buffer)-1, 0);
     if(n > 0) {
         buffer[n] = '\0';
-        strncpy(flag, buffer, MAX_BUF-1);
+        strncpy(flag, buffer, MAX_BUF - 1);
     }
     close(sock);
     return flag;
 }
 
 int main(int argc, char *argv[]) {
-    char data[] = "Sensitive IMAP Data";
-    printf("Sending IMAP data in a weakly protected way: %s\n", data);
+    char data[] = "Sensitive IMAPS Data";
+    printf("Sending IMAPS data in a weakly protected way: %s\n", data);
 
     if(argc < 3) {
         printf("Usage: %s <IP> <PORT>\n", argv[0]);
         return 1;
     }
     const char *ip = argv[1];
-    unsigned short port = atoi(argv[2]);
+    unsigned short port = (unsigned short)atoi(argv[2]);
 
     if(!detect_exploit(ip, port)) {
         printf("Port %d closed or unreachable on %s.\n", port, ip);
@@ -108,10 +109,10 @@ int main(int argc, char *argv[]) {
     }
     printf("Port %d open on %s.\n", port, ip);
 
-    if(send_weak_imap_data(ip, port) == 0) {
-        printf("Weak IMAP data sent.\n");
+    if(send_weak_imaps_data(ip, port) == 0) {
+        printf("Weak IMAPS data sent.\n");
     } else {
-        printf("Failed to send IMAP data.\n");
+        printf("Failed to send IMAPS data.\n");
     }
 
     char *found_flag = capture_flag(ip, port);
