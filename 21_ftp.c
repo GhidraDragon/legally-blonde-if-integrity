@@ -14,7 +14,7 @@
        - Tests for anonymous login.
        - Optionally performs brute-force attempts if --bruteforce is provided.
        - Tries to retrieve common flag files.
-       - Prompts for a password at the end; the correct one is "CTFSecret" to trigger /bin/sh.
+       - Automatically enters data and attempts password guesses. "CTFSecret" triggers /bin/sh.
 */
 
 #include <stdio.h>
@@ -42,6 +42,29 @@ int checkPassword() {
         hidden();
     } else {
         printf("Access denied.\n");
+    }
+    return 0;
+}
+
+int autoGuessPassword() {
+    const char *guesses[] = {
+        "password\n",
+        "1234\n",
+        "admin\n",
+        "test\n",
+        "CTFSecret\n"
+    };
+    int i;
+    for (i = 0; i < (int)(sizeof(guesses)/sizeof(guesses[0])); i++) {
+        FILE *fp = fmemopen((void*)guesses[i], strlen(guesses[i]), "r");
+        if (!fp) continue;
+        int saved_stdin = dup(STDIN_FILENO);
+        dup2(fileno(fp), STDIN_FILENO);
+        checkPassword();
+        fflush(stdout);
+        dup2(saved_stdin, STDIN_FILENO);
+        close(saved_stdin);
+        fclose(fp);
     }
     return 0;
 }
@@ -254,7 +277,6 @@ int ftpScan(char *target, int doBruteForce) {
 }
 
 int main(int argc, char *argv[]) {
-    char buf[32];
     int doBrute = 0;
 
     if (argc < 2 || !strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
@@ -271,11 +293,8 @@ int main(int argc, char *argv[]) {
     printf("[+] Scanning target: %s\n", argv[1]);
     ftpScan(argv[1], doBrute);
 
-    printf("Enter any data:\n");
-    fgets(buf, sizeof(buf), stdin);
-    buf[strcspn(buf, "\n")] = 0;
-    printf("Data: %s\n", buf);
-    printf("Guess the password:\n");
-    checkPassword();
+    printf("Auto entering data...\n");
+    autoGuessPassword();
+
     return 0;
 }
