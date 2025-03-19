@@ -3,6 +3,13 @@
      brew install libssh
      g++ -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lssh -o 22_ssh 22_ssh.cpp
    Enhanced to include optional public key authentication, basic concurrency limiting, and expanded verification.
+
+   Usage:
+     22_ssh [private_keyfile] [thread_count] [target1] [target2] ...
+
+   If no private key file is given, password-based attempts only are used.
+   If no thread count is given, 4 is used by default.
+   If no targets are specified, 127.0.0.1 is used by default.
 */
 
 #include <iostream>
@@ -20,7 +27,7 @@
 #include <queue>
 #include <condition_variable>
 
-static const int MAX_THREADS = 4;
+static int MAX_THREADS = 4;
 std::mutex queueMutex;
 std::condition_variable queueCV;
 
@@ -166,11 +173,27 @@ void processTarget(const std::string& ip, const std::vector<std::pair<std::strin
 int main(int argc, char** argv) {
     std::string keyFile;
     if (argc > 1) keyFile = argv[1];
+    if (argc > 2) {
+        try {
+            MAX_THREADS = std::stoi(argv[2]);
+        } catch (...) {
+            MAX_THREADS = 4;
+        }
+        if (MAX_THREADS < 1) MAX_THREADS = 1;
+    }
+    std::vector<std::string> targets;
+    if (argc > 3) {
+        for (int i = 3; i < argc; i++) {
+            targets.push_back(argv[i]);
+        }
+    } else {
+        targets.push_back("127.0.0.1");
+    }
+
     std::string serverKey = "some_unverified_key";
     if (verifyHostKey(serverKey)) {
         std::cout << "Connected without proper verification.\n";
     }
-    std::vector<std::string> targets = {"127.0.0.1"};
     std::vector<std::pair<std::string,std::string>> creds = {{"testuser","testpassword"},{"root","toor"}};
 
     std::queue<std::string> ipQueue;
