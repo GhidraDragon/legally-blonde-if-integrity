@@ -8,4 +8,6 @@ They say ChatGPT can make mistakes; check important info, but how about not assu
 
 ----
 
-python3.12 rlscan.py
+python3.12 run_googlebot.py
+
+![image](https://github.com/user-attachments/assets/72cea20f-b899-4463-80d9-41410372ae57)
