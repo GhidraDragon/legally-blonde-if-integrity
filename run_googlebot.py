@@ -918,7 +918,6 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
                 ("3389_rdp_standard", "3389"),
                 ("3390_rpc", "3390"),
                 ("5060_sip", "5060"),
-                ("8080_http_alternate", "8080"),
                 ("weak_netbios_ns_tool", "137")
             ]
             for c_name, c_port in commands:
