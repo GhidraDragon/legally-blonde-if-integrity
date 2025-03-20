@@ -904,6 +904,8 @@ def priority_bfs_crawl_and_scan(starts,max_depth=20):
                 ("135_microsoft_rpc", "135"),
                 ("23_telnet", "23"),
                 ("80_http", "80"),
+                ("81_https", "81")
+                ("81_https", "443")
                 ("53_dns", "53"),
                 ("25_smtp", "25"),
                 ("110_pop3", "110"),
