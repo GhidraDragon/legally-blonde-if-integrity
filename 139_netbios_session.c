@@ -14,7 +14,7 @@
  #include <sys/types.h>
  #include <sys/socket.h>
  #include <sys/time.h>
- 
+
  #define MAX_BUF 1024
  
  static int set_socket_timeout(int sock, int seconds) {
