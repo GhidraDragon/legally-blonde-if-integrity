@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #pragma pack(push, 1)
 typedef struct _SMB2Header {
@@ -273,6 +274,13 @@ static int  gCShareConnected = 0;
 static uint32_t gCShareTreeId = 0;
 static int gPersistentFlagCounter = 0;
 
+/* Captured persistent handles array */
+static struct {
+    uint64_t persistent;
+    uint64_t volat;
+} gCapturedHandles[64];
+static int gCapturedHandlesCount = 0;
+
 static void parseSMB2NegotiateResponse(const unsigned char* buf, ssize_t len) {
     if (len >= (ssize_t)sizeof(SMB2NegotiateResponse)) {
         SMB2NegotiateResponse *r = (SMB2NegotiateResponse *)buf;
@@ -403,6 +411,16 @@ void buildSMB2Header(uint16_t command, uint32_t treeId, uint64_t sessionId, SMB2
 
 static int doTreeConnect(const char *ipcPath);
 
+static void dumpPersistentHandles() {
+    printf("[Client] Captured Persistent Handles:\n");
+    for (int i = 0; i < gCapturedHandlesCount; i++) {
+        printf("  #%d: Persistent=0x%llx Volatile=0x%llx\n",
+               i,
+               (unsigned long long)gCapturedHandles[i].persistent,
+               (unsigned long long)gCapturedHandles[i].volat);
+    }
+}
+
 static void writePersistentAccessFile(const char *description) {
     if (!gCShareConnected && gSessionId) {
         char sharePath[256];
@@ -459,6 +477,12 @@ static void writePersistentAccessFile(const char *description) {
     uint64_t fidPersist  = cres->FileIdPersistent;
     uint64_t fidVolatile = cres->FileIdVolatile;
 
+    if (gCapturedHandlesCount < 64) {
+        gCapturedHandles[gCapturedHandlesCount].persistent = fidPersist;
+        gCapturedHandles[gCapturedHandlesCount].volat      = fidVolatile;
+        gCapturedHandlesCount++;
+    }
+
     SMB2Header whdr;
     buildSMB2Header(SMB2_WRITE, gCShareTreeId, gSessionId, &whdr);
     SMB2WriteRequest wreq;
@@ -500,6 +524,97 @@ static void writePersistentAccessFile(const char *description) {
     unsigned char cbuf[512];
     ssize_t cPayloadLen;
     recvSMB2Response(&cRespHdr, cbuf, sizeof(cbuf), &cPayloadLen);
+
+    {
+        char masterPath[256];
+        snprintf(masterPath, sizeof(masterPath), "C:\\Windows\\Temp\\persistent_flag_master.log");
+        SMB2Header mhdr;
+        buildSMB2Header(SMB2_CREATE, gCShareTreeId, gSessionId, &mhdr);
+        SMB2CreateRequest mcreq;
+        memset(&mcreq, 0, sizeof(mcreq));
+        mcreq.StructureSize     = 57;
+        mcreq.SmbCreateFlags    = 0x02;
+        mcreq.DesiredAccess     = 0x001F01FF;
+        mcreq.ShareAccess       = 7;
+        mcreq.CreateDisposition = 4;
+        mcreq.CreateOptions     = 0x20;
+        mcreq.NameOffset        = sizeof(mcreq);
+        uint32_t mPathLenBytes  = (uint32_t)(strlen(masterPath) * 2);
+        mcreq.NameLength        = (uint16_t)mPathLenBytes;
+        size_t mTotalSize = sizeof(mcreq) + mPathLenBytes;
+        unsigned char *mReqBuf = (unsigned char *)malloc(mTotalSize);
+        if (!mReqBuf) return;
+        memcpy(mReqBuf, &mcreq, sizeof(mcreq));
+        unsigned char *mpName = mReqBuf + sizeof(mcreq);
+        for (size_t i = 0; i < strlen(masterPath); i++) {
+            mpName[i*2]   = (unsigned char)masterPath[i];
+            mpName[i*2+1] = 0x00;
+        }
+        if (sendSMB2Request(&mhdr, mReqBuf, mTotalSize) < 0) {
+            free(mReqBuf);
+            return;
+        }
+        free(mReqBuf);
+        SMB2Header mRespHdr;
+        unsigned char mbuf[1024];
+        ssize_t mpayloadLen;
+        if (recvSMB2Response(&mRespHdr, mbuf, sizeof(mbuf), &mpayloadLen) < 0) return;
+        if (mRespHdr.Status != STATUS_SUCCESS) return;
+        SMB2CreateResponse *mcres = (SMB2CreateResponse *)mbuf;
+        uint64_t mFidPersist  = mcres->FileIdPersistent;
+        uint64_t mFidVolatile = mcres->FileIdVolatile;
+
+        if (gCapturedHandlesCount < 64) {
+            gCapturedHandles[gCapturedHandlesCount].persistent = mFidPersist;
+            gCapturedHandles[gCapturedHandlesCount].volat      = mFidVolatile;
+            gCapturedHandlesCount++;
+        }
+
+        SMB2Header mwhdr;
+        buildSMB2Header(SMB2_WRITE, gCShareTreeId, gSessionId, &mwhdr);
+        SMB2WriteRequest mwreq;
+        memset(&mwreq, 0, sizeof(mwreq));
+        mwreq.StructureSize    = 49;
+        mwreq.DataOffset       = sizeof(mwreq);
+        mwreq.FileIdPersistent = mFidPersist;
+        mwreq.FileIdVolatile   = mFidVolatile;
+        mwreq.Offset           = 0xFFFFFFFFFFFFFFFFULL;
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        char stamp[512];
+        snprintf(stamp, sizeof(stamp), "[%02d:%02d:%02d] Persistent log entry: %s\n",
+                 t->tm_hour, t->tm_min, t->tm_sec, description);
+        mwreq.Length = (uint32_t)strlen(stamp);
+        size_t mWriteTotal = sizeof(mwreq) + strlen(stamp);
+        unsigned char *mWriteBuf = (unsigned char *)malloc(mWriteTotal);
+        if (!mWriteBuf) return;
+        memcpy(mWriteBuf, &mwreq, sizeof(mwreq));
+        memcpy(mWriteBuf + sizeof(mwreq), stamp, strlen(stamp));
+        if (sendSMB2Request(&mwhdr, mWriteBuf, mWriteTotal) < 0) {
+            free(mWriteBuf);
+            return;
+        }
+        free(mWriteBuf);
+        SMB2Header mwRespHdr;
+        unsigned char mwbuf2[512];
+        ssize_t mwPayloadLen;
+        if (recvSMB2Response(&mwRespHdr, mwbuf2, sizeof(mwbuf2), &mwPayloadLen) < 0) {
+            return;
+        }
+        SMB2Header mchdr;
+        buildSMB2Header(SMB2_CLOSE, gCShareTreeId, gSessionId, &mchdr);
+        SMB2CloseRequest mclreq;
+        memset(&mclreq, 0, sizeof(mclreq));
+        mclreq.StructureSize    = 24;
+        mclreq.Flags            = 0xFFFF;
+        mclreq.FileIdPersistent = mFidPersist;
+        mclreq.FileIdVolatile   = mFidVolatile;
+        sendSMB2Request(&mchdr, &mclreq, sizeof(mclreq));
+        SMB2Header mcRespHdr;
+        unsigned char mcbuf[512];
+        ssize_t mcPayloadLen;
+        recvSMB2Response(&mcRespHdr, mcbuf, sizeof(mcbuf), &mcPayloadLen);
+    }
 }
 
 int doNegotiate() {
@@ -591,9 +706,11 @@ int doTreeConnect(const char *ipcPath) {
     gTreeId = respHdr.TreeId;
     printf("[Client] TREE_CONNECT to %s OK. TreeId=0x%08X\n", ipcPath, gTreeId);
     parseSMB2TreeConnectResponse(buf, payloadLen);
-    char note[256];
-    snprintf(note, sizeof(note), "TreeConnect successful: %s - persistent flags used.\n", ipcPath);
-    writePersistentAccessFile(note);
+    {
+        char note[256];
+        snprintf(note, sizeof(note), "TreeConnect successful: %s - persistent flags used.\n", ipcPath);
+        writePersistentAccessFile(note);
+    }
     return 0;
 }
 
@@ -645,9 +762,18 @@ int doOpenPipe(const char *pipeName) {
     printf("[Client] Named pipe '%s' opened OK. FID=(%llx:%llx)\n",
            pipeName, (unsigned long long)gPipeFidPersistent, (unsigned long long)gPipeFidVolatile);
     parseSMB2CreateResponse(buf, payloadLen);
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Opened pipe %s with persistent handle.\n", pipeName);
-    writePersistentAccessFile(msg);
+
+    if (gCapturedHandlesCount < 64) {
+        gCapturedHandles[gCapturedHandlesCount].persistent = gPipeFidPersistent;
+        gCapturedHandles[gCapturedHandlesCount].volat      = gPipeFidVolatile;
+        gCapturedHandlesCount++;
+    }
+
+    {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Opened pipe %s with persistent handle.\n", pipeName);
+        writePersistentAccessFile(msg);
+    }
     return 0;
 }
 
@@ -1379,11 +1505,10 @@ int main(int argc, char *argv[]) {
     doMS17_010Check();
     doPrinterBug();
     doRemoteRegistryOpen();
-
     doEcho();
     doEcho();
     doEcho();
-
+    dumpPersistentHandles();
     close(gSock);
     printf("[Client] Done.\n");
     return EXIT_SUCCESS;
